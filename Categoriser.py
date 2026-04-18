@@ -31,7 +31,11 @@ label2id = {"BAD": 0, "GOOD": 1}
 
 print ("About to load")
 
-tokenizer = AutoTokenizer.from_pretrained("google/gemma-3-12b-it")
+tokenizer = AutoTokenizer.from_pretrained("google/gemma-3-4b-it", attn_implementation="flash_attention_2", truncation=True, max_length=1024)
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
+    # For Classification, usually padding on the left is better for Gemma/Llama
+    tokenizer.padding_side = "left" 
 
 print ("Tokenizer Loaded")
 
@@ -42,12 +46,14 @@ quantization_config = BitsAndBytesConfig(
     bnb_4bit_compute_dtype=torch.bfloat16
 )
 
-model = AutoModelForSequenceClassification.from_pretrained("google/gemma-3-12b-it",
+model = AutoModelForSequenceClassification.from_pretrained("google/gemma-3-4b-it",
                                                            quantization_config=quantization_config,
                                                            num_labels=2, 
                                                            id2label=id2label, 
                                                            label2id=label2id, 
                                                            device_map="cuda:0")
+model.config.pad_token_id = tokenizer.pad_token_id
+model.gradient_checkpointing_enable()
 
 print ("loading PEFT and LoRA")
 
@@ -93,17 +99,17 @@ print ("data tokenized")
 training_args = TrainingArguments(
     output_dir="ExternalCommentsModel",
     learning_rate=2e-4,
-    per_device_train_batch_size=16,
-    per_device_eval_batch_size=16,
+    per_device_train_batch_size=1,
+    gradient_accumulation_steps=16,
+    per_device_eval_batch_size=4,
     num_train_epochs=3,
     weight_decay=0.01,
-    eval_strategy="epoch",
-    save_strategy="epoch",
-    load_best_model_at_end=True,
-    push_to_hub=True,
+    eval_strategy="no",
+    push_to_hub=False,
     optim="paged_adamw_32bit",
     bf16=True, 
-    gradient_checkpointing=True
+    logging_steps=1,
+    dataloader_num_workers=0
 )
 
 print ("declaring trainer")
@@ -125,5 +131,5 @@ logging.set_verbosity_info()
 
 trainer.train()
 
-print ("training complete")
-trainer.push_to_hub()
+# print ("training complete")
+# trainer.push_to_hub()
